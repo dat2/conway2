@@ -1,6 +1,20 @@
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
-import Lib
+-- external
+import           Options.Generic
+
+-- internal
+import           Lib
+
+data ConwayArgs = ConwayArgs Int Int
+    deriving (Generic, Show)
+
+instance ParseRecord ConwayArgs
 
 main :: IO ()
-main = someFunc
+main = do
+    (ConwayArgs w h) :: ConwayArgs <- getRecord "conway2"
+    run w h
