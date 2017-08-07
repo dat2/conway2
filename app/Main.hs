@@ -72,13 +72,12 @@ nextCell g@Grid { width, height, grid } (row, col, cell)
     -- If a cell is 'on' but more than three of its neighbours are on, it will die out - like overcrowding
     | cell /= Off && (alive < 2 || alive > 3) = (row, col, Off)
     -- If the amount of the other colors is greater then amount of that cell's own color then it just changes color.
-    | cell == Red && 1 + length red <= length blue = (row, col, Blue)
-    | cell == Blue && 1 + length blue <= length red = (row, col, Red)
+    | cell /= Off && 1 + length same <= length diff = (row, col, majority on)
     | otherwise = (row, col, cell)
     where neighbours = map (get g) $ neighbourIndexes (width, height) (row, col)
           on = filter (/= Off) neighbours
           alive = length on
-          (red, blue) = partition (== Red) $ filter (/= Off) neighbours
+          (same, diff) = partition (== cell) $ filter (/= Off) neighbours
 
 -- | return the element that occurs the most in the list. the list must be non empty
 majority :: Eq a => [a] -> a
