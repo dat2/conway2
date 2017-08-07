@@ -5,11 +5,16 @@
 module Main where
 
 -- external
-import           Control.Monad
-import           Graphics.Gloss
-import           Graphics.Gloss.Data.ViewPort
-import           Options.Generic
-import           System.Random
+import           Control.Monad                (forM)
+import           Data.List                    (group, maximumBy, partition)
+import           Data.Ord                     (comparing)
+import           Graphics.Gloss               (Display (..), Picture (..),
+                                               black, blue, rectangleSolid, red,
+                                               simulate)
+import           Graphics.Gloss.Data.ViewPort (ViewPort (..))
+import           Options.Generic              (Generic, ParseRecord (..),
+                                               getRecord)
+import           System.Random                (Random (..), getStdRandom)
 
 -- | grid cells, this can be easily extended to support any number of colours
 data Cell = Off | Red | Blue deriving (Show, Eq, Bounded, Enum)
@@ -32,14 +37,14 @@ new width height = do
     grid <- forM [0..(height - 1)] (forM [0..(width - 1)] . randomCell)
     return Grid { width = width, height = height, grid = grid }
 
+-- | get an (row, column) out of the grid. this does no bounds checking.
+get :: Grid a -> (Int, Int) -> a
+get Grid { grid } (row, col) = thd $ grid !! row !! col
+  where thd (_,_,t) = t
+
 -- | generate a random cell
 randomCell :: Int -> Int -> IO (Int, Int, Cell)
 randomCell row col = (,,) row col <$> getStdRandom random
-
--- | given the dimensions, and the coordinates (row, col), determine a new cell
-mapGrid :: ((Int,Int) -> (Int,Int,a) -> a) -> Grid a -> Grid a
-mapGrid f Grid { grid, width, height } = Grid { grid = each (f (width, height)) grid, width = width, height = height }
-    where each f = map (map (\(row,col,a) -> (row,col,f(row,col,a))))
 
 -- | a variable for the length of each cell
 squareLength :: Num a => a
@@ -54,50 +59,36 @@ draw Grid { grid, width, height } = Pictures $ map (Pictures . map cell) grid
         offset v = fromIntegral (v * squareLength) / 2 - squareLength / 2
         square x y = Translate (fromIntegral (x * squareLength) - offset width) (fromIntegral (y * squareLength) - offset height) $ rectangleSolid squareLength squareLength
 
--- | "step" takes a
+-- | step will update the grid a single simulation step
 step :: ViewPort -> Float -> Grid Cell -> Grid Cell
 step _ _ g@Grid { width, height, grid } = Grid { width = width, height = height, grid = map (map (nextCell g)) grid }
 
-
+-- | this will calculate the next value of a given cell
 nextCell :: Grid Cell -> (Int, Int, Cell) -> (Int, Int, Cell)
-nextCell Grid { width, height, grid } (row, col, cell)
+nextCell g@Grid { width, height, grid } (row, col, cell)
+    -- If a cell is 'off' but exactly 3 of its neighbours are on, that cell will also turn on - like reproduction.
+    | cell == Off && alive == 3 = (row, col, majority on)
     -- If a cell is 'on' but less than two of its neighbours are on, it will die out - like underpopulation
     -- If a cell is 'on' but more than three of its neighbours are on, it will die out - like overcrowding
-    | cell /= Off && same > diff && (alive < 2 || alive > 3) = (row, col, Off)
-    | cell /= Off && same <= diff = (row, col, flipCell cell)
+    | cell /= Off && (alive < 2 || alive > 3) = (row, col, Off)
+    -- If the amount of the other colors is greater then amount of that cell's own color then it just changes color.
+    | cell == Red && 1 + length red <= length blue = (row, col, Blue)
+    | cell == Blue && 1 + length blue <= length red = (row, col, Red)
     | otherwise = (row, col, cell)
-    where ns = map get $ neighbours (width, height) (row, col)
-          get (row, col) = thd (grid !! row !! col)
-          on = filter (/= Off) ns
+    where neighbours = map (get g) $ neighbourIndexes (width, height) (row, col)
+          on = filter (/= Off) neighbours
           alive = length on
-          same = 1 + length (filter (== cell) on)
-          diff = length $ filter (/= cell) on
+          (red, blue) = partition (== Red) $ filter (/= Off) neighbours
 
-thd :: (a,b,c) -> c
-thd (_,_,t) = t
+-- | return the element that occurs the most in the list. the list must be non empty
+majority :: Eq a => [a] -> a
+majority = head . snd . maximumBy (comparing fst) . map (\xs -> (length xs, xs)) . group
 
-flipCell :: Cell -> Cell
-flipCell Red  = Blue
-flipCell Blue = Red
-flipCell x    = x
-
-{-
-- The total amount of cells in his neighbourhood of his color (including himself) is greater then the amount of cells not in his color in his neighbourhood
-    -> apply normal rules, meaning that you have to count in the cells of other colors as alive cells
-- If the amout of the other colors is greater then amount of that cell's own color then it just changes color.
--}
-
-neighbours :: (Int, Int) -> (Int, Int) -> [(Int, Int)]
-neighbours (width,height) (r, c) = [ (row, col) | row <- map clampRow [r - 1, r, r + 1], col <- map clampCol [c - 1, c, c + 1], row /= r || col /= c ]
-  where clampRow = wrap 0 (height - 1)
-        clampCol = wrap 0 (width - 1)
-
--- | wrap a number to the other side
-wrap :: Int -> Int -> Int -> Int
-wrap min max n
-    | n < min = max
-    | n > max = min
-    | otherwise = n
+-- | given a (width, height) and a (row, column), return a list of [(row, columns)] to access
+neighbourIndexes :: (Int, Int) -> (Int, Int) -> [(Int, Int)]
+neighbourIndexes (width,height) (r, c) = [ (row, col) | row <- map clampRow [r - 1, r, r + 1], col <- map clampCol [c - 1, c, c + 1], row /= r || col /= c ]
+  where clampRow r = r `mod` height
+        clampCol c = c `mod` width
 
 -- | given width, height, fps, play the game :)
 run :: Int -> Int -> Int -> IO ()
@@ -106,12 +97,13 @@ run w h fps = do
     let win = InWindow "Conway's Extended Game of Life" (w * squareLength, h * squareLength) (0, 0)
     simulate win black fps initial draw step
 
--- | config (width, height)
+-- | config (width, height, fps)
 data ConwayArgs = ConwayArgs Int Int Int
     deriving (Generic, Show)
 
 instance ParseRecord ConwayArgs
 
+-- | run the program
 main :: IO ()
 main = do
     (ConwayArgs w h fps) :: ConwayArgs <- getRecord "conway2"
